@@ -5,9 +5,9 @@
 
 import tensorflow as tf
 from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras.layers import Layer, Input, Dense, Embedding, Add, MultiHeadAttention, LayerNormalization, Dropout
+from tensorflow.keras.layers import Layer, Input, Dense, Embedding, Add, MultiHeadAttention, LayerNormalization
 import numpy as np
-from keras__.RNN.PreProcessor import PreProcessor
+from keras_tf.NLP.preprocessor import TatoebaPreprocessor
 
 
 class TransformerEncoderSublayer(Layer):
@@ -128,7 +128,7 @@ class PositionEmbedding(Layer):
 
 class Transformer:
     def __init__(self):
-        preprocessor = PreProcessor(dataDir='D:\\wallpaper\\datas\\fra-eng\\fra.txt')
+        preprocessor = TatoebaPreprocessor(dataDir='D:\\wallpaper\\datas\\fra-eng\\fra.txt')
 
         self.text_en, self.text_fra = preprocessor.getOriginalText()
         (self.dict_en, self.dict_en_rev), (self.dict_fra, self.dict_fra_rev) = preprocessor.getVocab()

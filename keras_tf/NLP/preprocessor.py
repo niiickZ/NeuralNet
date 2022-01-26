@@ -3,11 +3,13 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 import random
 
 
-class PreProcessor:
+class TatoebaPreprocessor:
     """
-        load english to franch translation dataset
+        Load and preprocess the English-French sentence pair dataset.
+        The dataset consists of tab-delimited bilingual sentence pairs.
+        The sentence pairs are selected from the Tatoeba Project by http://www.manythings.org/.
         see: http://www.manythings.org/anki/fra-eng.zip
-        find datas more languages: http://www.manythings.org/anki/
+        finding datasets of more languages: http://www.manythings.org/anki/
     """
 
     def __init__(self, dataDir, num_samples=None, shuffle=True):

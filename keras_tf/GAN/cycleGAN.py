@@ -7,7 +7,7 @@ from keras.models import Model
 from keras.layers import Conv2D, LeakyReLU, Input, Add, Activation, Conv2DTranspose
 from keras.optimizers import Adam
 from keras.initializers import RandomNormal
-from keras__.NormalizationLayer.NormalizationLayer import InstanceNormalization
+from keras_tf.NormalizationLayer.NormalizationLayer import InstanceNormalization
 import os
 import cv2
 import numpy as np

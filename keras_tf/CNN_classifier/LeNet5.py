@@ -1,5 +1,5 @@
 """
-    CNN getting started example —— LeNet-5
+    CNN_classifier getting started example —— LeNet-5
     p.s. The original paper used RBF as the last layer, here we'll simply use a linear layer with softmax
 """
 

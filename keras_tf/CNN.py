@@ -1,4 +1,4 @@
-""" getting started to keras and CNN
+""" getting started to keras and CNN_classifier
     Mnist hand-written digital number classification
 """
 

@@ -1,18 +1,17 @@
-""" Seq2Seq with Attention
-    paper: Neural Machine Translation By Jointly Learning To Align And Translate
-    see: https://arxiv.org/pdf/1409.0473.pdf
+""" Seq2Seq
+    paper: Sequence to Sequence Learning with Neural Networks
+    see: https://proceedings.neurips.cc/paper/2014/file/a14ac55a4f27472c5d894ec1c3c743d2-Paper.pdf
 """
 
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Bidirectional, \
-    TimeDistributed, Attention, Average
+from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, TimeDistributed
 import numpy as np
-from keras__.RNN.PreProcessor import PreProcessor
+from keras_tf.NLP.preprocessor import TatoebaPreprocessor
 
 
 class Seq2Seq:
     def __init__(self):
-        preprocessor = PreProcessor(dataDir='D:\\wallpaper\\datas\\fra-eng\\fra.txt', num_samples=10000)
+        preprocessor = TatoebaPreprocessor(dataDir='D:\\wallpaper\\datas\\fra-eng\\fra.txt')
 
         self.text_en, self.text_fra = preprocessor.getOriginalText()
         (self.dict_en, self.dict_en_rev), (self.dict_fra, self.dict_fra_rev) = preprocessor.getVocab()
@@ -24,20 +23,13 @@ class Seq2Seq:
     def buildEncoder(self, num_word, latent_dim):
         inputs = Input(shape=(None,))  # shape: (samples, max_length)
         embedded = Embedding(num_word, 128)(inputs)  # shape: (samples, length, vec_dim)
-
-        outputs, h1, c1, h2, c2 = Bidirectional(
-            LSTM(latent_dim, return_sequences=True, return_state=True),
-            merge_mode='ave'
-        )(embedded)
-
-        state_h = Average()([h1, h2])
-        state_c = Average()([c1, c2])
+        _, state_h, state_c = LSTM(latent_dim, return_state=True)(embedded)
 
         # only save the last state of encoder
-        return Model(inputs, [outputs, state_h, state_c])
+        return Model(inputs, [state_h, state_c])
 
     def buildDecoder(self, num_word, latent_dim):
-        inputs = Input(shape=(None,))   # shape: (samples, max_length)
+        inputs = Input(shape=(None,))  # shape: (samples, max_length)
         embedded = Embedding(num_word, 128)(inputs)  # shape: (samples, length, vec_dim)
 
         input_state_h = Input(shape=(latent_dim,))
@@ -46,17 +38,14 @@ class Seq2Seq:
 
         # initial_state(Call arguments): List of initial state tensors to be passed to the first call of the cell
         # Here we use the last state of encoder as the initial state of decoder
-        outputs_dec, output_state_h, output_state_c = lstm(
+        outputs, output_state_h, output_state_c = lstm(
             embedded, initial_state=[input_state_h, input_state_c]
         )
 
-        outputs_enc = Input(shape=(None, latent_dim))
-        outputs_atten = Attention()([outputs_dec, outputs_enc])
-
-        prob = TimeDistributed(Dense(num_word, activation='softmax'))(outputs_atten)
+        prob = TimeDistributed(Dense(num_word, activation='softmax'))(outputs)
 
         return Model(
-            [inputs, input_state_h, input_state_c, outputs_enc],
+            [inputs, input_state_h, input_state_c],
             [prob, output_state_h, output_state_c]
         )
 
@@ -67,8 +56,8 @@ class Seq2Seq:
         inputs_encoder = Input(shape=(None,))
         inputs_decoder = Input(shape=(None,))
 
-        outputs_encoder, state_h, state_c = encoder(inputs_encoder)
-        prob, _, _ = decoder([inputs_decoder, state_h, state_c, outputs_encoder])
+        states = encoder(inputs_encoder)
+        prob, _, _ = decoder([inputs_decoder] + states)
 
         model = Model([inputs_encoder, inputs_decoder], prob)
 
@@ -99,7 +88,7 @@ class Seq2Seq:
             print('Ground truth:', self.text_fra[idx])
 
     def translate(self, input_seq):
-        outputs_encoder, state_h, state_c = self.encoder.predict(input_seq)
+        states = self.encoder.predict(input_seq)
 
         # blank target sentence, which only has a <sos> symbol
         cur_word = np.zeros((1, 1))
@@ -108,7 +97,7 @@ class Seq2Seq:
         max_length = 80
         translated = ''
         for _ in range(max_length):
-            outputs, state_h, state_c = self.decoder.predict([cur_word, state_h, state_c, outputs_encoder])
+            outputs, state_h, state_c = self.decoder.predict([cur_word] + states)
 
             output_idx = np.argmax(outputs[0, -1, :])
             output_word = self.dict_fra_rev[output_idx]
@@ -119,11 +108,12 @@ class Seq2Seq:
 
             translated += ' ' + output_word
 
-            # next input of decoder
+            # next input and initial state of decoder
             cur_word = np.zeros((1, 1))
             cur_word[0, 0] = output_idx
+            states = [state_h, state_c]
 
         return translated
 
 seq2seq = Seq2Seq()
-seq2seq.trainModel(epochs=10, batch_size=64)
+seq2seq.trainModel(epochs=4, batch_size=32)

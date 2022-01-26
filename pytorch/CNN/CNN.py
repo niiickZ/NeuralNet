@@ -1,4 +1,4 @@
-""" getting started to pytorch and CNN
+""" getting started to pytorch and CNN_classifier
     Mnist hand-written digital number classification
 """
 
