@@ -1,7 +1,8 @@
-""" original GAN
-    paper: Generative Adversarial Nets
-    see: https://proceedings.neurips.cc/paper/2014/file/5ca3e9b122f61f8f06494c97b1afccf3-Paper.pdf
+""" Least Square GAN
+    paper: Least Squares Generative Adversarial Networks
+    see: https://openaccess.thecvf.com/content_ICCV_2017/papers/Mao_Least_Squares_Generative_ICCV_2017_paper.pdf
 """
+
 
 import torch
 import torch.nn as nn
@@ -9,86 +10,98 @@ from torch.optim import Adam
 import torch.utils.data as Data
 import torchvision
 from torchvision import transforms
-import numpy as np
-
 
 class Generator(nn.Module):
-    """define the generator"""
-    def __init__(self, latent_dim, output_shape):
+    def __init__(self, latent_dim):
         super().__init__()
 
-        self.output_shape = output_shape
+        self.dense = nn.Sequential(
+            nn.Linear(latent_dim, 256 * 7 * 7),
+            nn.BatchNorm1d(256 * 7 * 7, momentum=0.8),
+        )
 
-        self.layer1 = nn.Sequential(
-            nn.Linear(latent_dim, 256),
-            nn.BatchNorm1d(256, momentum=0.8),
+        self.conv1 = nn.Sequential(
+            nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(128, momentum=0.8),
             nn.ReLU(),
         )
 
-        self.layer2 = nn.Sequential(
-            nn.Linear(256, 512),
-            nn.BatchNorm1d(512, momentum=0.8),
+        self.conv2 = nn.Sequential(
+            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(64, momentum=0.8),
             nn.ReLU(),
         )
 
-        self.layer3 = nn.Sequential(
-            nn.Linear(512, 1024),
-            nn.BatchNorm1d(1024, momentum=0.8),
+        self.conv3 = nn.Sequential(
+            nn.ConvTranspose2d(64, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32, momentum=0.8),
             nn.ReLU(),
         )
 
-        self.layer4 = nn.Sequential(
-            nn.Linear(1024, int(np.prod(self.output_shape))),
-            nn.Sigmoid()
+        self.conv4 = nn.Sequential(
+            nn.ConvTranspose2d(32, 1, kernel_size=3, padding=1),
+            nn.Sigmoid(),
         )
 
     def forward(self, inputs):
-        x = self.layer1(inputs)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        output_img = x.reshape(-1, *self.output_shape)
-
+        x = self.dense(inputs)
+        x = x.reshape(-1, 256, 7, 7)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        output_img = self.conv4(x)
         return output_img
 
-
 class Discriminator(nn.Module):
-    """define the discriminator"""
     def __init__(self, input_shape):
         super().__init__()
 
-        self.model = nn.Sequential(
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(input_shape[0], 64, kernel_size=3, stride=2, padding=1),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Dropout2d(0.4),
+        )
+
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Dropout2d(0.4),
+        )
+
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Dropout2d(0.4),
+        )
+
+        self.dense = nn.Sequential(
             nn.Flatten(),
-
-            nn.Linear(int(np.prod(input_shape)), 512),
+            nn.Linear(256 * 7 * 7, 512),
             nn.LeakyReLU(negative_slope=0.2),
-
-            nn.Linear(512, 256),
-            nn.LeakyReLU(negative_slope=0.2),
-
-            nn.Linear(256, 64),
-            nn.LeakyReLU(negative_slope=0.2),
-
-            nn.Linear(64, 1),
+            nn.Linear(512, 1),
         )
 
     def forward(self, input_img):
-        outputs = self.model(input_img)
-        return outputs
+        x = self.conv1(input_img)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        output = self.dense(x)
 
-class GAN():
+        return output
+
+class LSGAN():
     def __init__(self):
         self.cuda_on = torch.cuda.is_available()
 
         self.latent_dim = 100
         self.img_shape = (1, 28, 28)
 
-        self.generator = Generator(self.latent_dim, self.img_shape)
+        self.generator = Generator(self.latent_dim)
         self.discriminator = Discriminator(self.img_shape)
 
         self.optim_G = Adam(self.generator.parameters(), lr=2e-4)
         self.optim_D = Adam(self.discriminator.parameters(), lr=2e-4)
-        self.loss_adver = nn.BCEWithLogitsLoss()
+        self.loss_adver = nn.MSELoss()
 
         if self.cuda_on:
             self.generator.cuda()
@@ -127,7 +140,7 @@ class GAN():
                 # generate fake images
                 img_gen = self.generator(z)
 
-                # train the discriminator
+                # Train Discriminator
                 D_loss_real = self.loss_adver(self.discriminator(img_real), valid)
                 D_loss_fake = self.loss_adver(self.discriminator(img_gen), fake)
                 D_loss = (D_loss_real + D_loss_fake) / 2
@@ -136,7 +149,7 @@ class GAN():
                 D_loss.backward(retain_graph=True)  # retain_graph=True: retain the computational graph
                 self.optim_D.step()
 
-                # train the generator
+                # Train Generator
                 G_loss = self.loss_adver(self.discriminator(img_gen), valid)
 
                 self.optim_G.zero_grad()
@@ -151,5 +164,5 @@ class GAN():
                         img_gen.detach()[:9], 'output\\{}_{}.png'.format(epoch, step), nrow=3)
 
 if __name__ == '__main__':
-    gan = GAN()
-    gan.train(epochs=12, batch_size=64)
+    gan = LSGAN()
+    gan.train(epochs=10, batch_size=64)

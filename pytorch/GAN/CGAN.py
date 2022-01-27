@@ -1,6 +1,6 @@
-""" original GAN
-    paper: Generative Adversarial Nets
-    see: https://proceedings.neurips.cc/paper/2014/file/5ca3e9b122f61f8f06494c97b1afccf3-Paper.pdf
+""" Conditional GAN
+    paper: Conditional Generative Adversarial Nets
+    see: https://arxiv.org/pdf/1411.1784.pdf
 """
 
 import torch
@@ -14,10 +14,12 @@ import numpy as np
 
 class Generator(nn.Module):
     """define the generator"""
-    def __init__(self, latent_dim, output_shape):
+    def __init__(self, latent_dim, output_shape, num_classes):
         super().__init__()
 
         self.output_shape = output_shape
+
+        self.embedding = nn.Embedding(num_classes, latent_dim)
 
         self.layer1 = nn.Sequential(
             nn.Linear(latent_dim, 256),
@@ -42,8 +44,12 @@ class Generator(nn.Module):
             nn.Sigmoid()
         )
 
-    def forward(self, inputs):
-        x = self.layer1(inputs)
+    def forward(self, inputs, label):
+        label_embed = self.embedding(label)
+        label_embed = label_embed.view(label_embed.shape[0], -1)
+
+        x = torch.mul(inputs, label_embed)
+        x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
@@ -54,12 +60,13 @@ class Generator(nn.Module):
 
 class Discriminator(nn.Module):
     """define the discriminator"""
-    def __init__(self, input_shape):
+    def __init__(self, input_shape, num_classes):
         super().__init__()
 
-        self.model = nn.Sequential(
-            nn.Flatten(),
+        embedding_dim = int(np.prod(input_shape))
+        self.embedding = nn.Embedding(num_classes, embedding_dim)
 
+        self.model = nn.Sequential(
             nn.Linear(int(np.prod(input_shape)), 512),
             nn.LeakyReLU(negative_slope=0.2),
 
@@ -69,22 +76,29 @@ class Discriminator(nn.Module):
             nn.Linear(256, 64),
             nn.LeakyReLU(negative_slope=0.2),
 
-            nn.Linear(64, 1),
+            nn.Linear(64, 1)
         )
 
-    def forward(self, input_img):
-        outputs = self.model(input_img)
+    def forward(self, input_img, label):
+        label_embed = self.embedding(label)
+        label_embed = label_embed.view(label_embed.shape[0], -1)
+
+        img_flat = input_img.view(input_img.shape[0], -1)
+        x = torch.mul(label_embed, img_flat)
+
+        outputs = self.model(x)
         return outputs
 
-class GAN():
+class CGAN():
     def __init__(self):
         self.cuda_on = torch.cuda.is_available()
 
         self.latent_dim = 100
         self.img_shape = (1, 28, 28)
+        self.num_classes = 10
 
-        self.generator = Generator(self.latent_dim, self.img_shape)
-        self.discriminator = Discriminator(self.img_shape)
+        self.generator = Generator(self.latent_dim, self.img_shape, self.num_classes)
+        self.discriminator = Discriminator(self.img_shape, self.num_classes)
 
         self.optim_G = Adam(self.generator.parameters(), lr=2e-4)
         self.optim_D = Adam(self.discriminator.parameters(), lr=2e-4)
@@ -109,7 +123,8 @@ class GAN():
         loader = self.getDataloader('D:/wallpaper/datas/pytorch/', batch_size)
 
         for epoch in range(epochs):
-            for step, (img_real, _) in enumerate(loader):
+            for step, (img_real, label) in enumerate(loader):
+                label = label.view(-1, 1)
                 num = img_real.shape[0]
 
                 valid = torch.ones((num, 1), dtype=torch.float32)
@@ -117,19 +132,22 @@ class GAN():
 
                 # standard normal distribution
                 z = torch.randn(num, self.latent_dim)
+                label_gen = torch.randint(0, 10, (num, 1))
 
                 if self.cuda_on:
                     valid = valid.cuda()
                     fake = fake.cuda()
                     z = z.cuda()
+                    label_gen = label_gen.cuda()
                     img_real = img_real.cuda()
+                    label = label.cuda()
 
                 # generate fake images
-                img_gen = self.generator(z)
+                img_gen = self.generator(z, label_gen)
 
                 # train the discriminator
-                D_loss_real = self.loss_adver(self.discriminator(img_real), valid)
-                D_loss_fake = self.loss_adver(self.discriminator(img_gen), fake)
+                D_loss_real = self.loss_adver(self.discriminator(img_real, label), valid)
+                D_loss_fake = self.loss_adver(self.discriminator(img_gen, label_gen), fake)
                 D_loss = (D_loss_real + D_loss_fake) / 2
 
                 self.optim_D.zero_grad()
@@ -137,7 +155,7 @@ class GAN():
                 self.optim_D.step()
 
                 # train the generator
-                G_loss = self.loss_adver(self.discriminator(img_gen), valid)
+                G_loss = self.loss_adver(self.discriminator(img_gen, label_gen), valid)
 
                 self.optim_G.zero_grad()
                 G_loss.backward()
@@ -147,9 +165,22 @@ class GAN():
                     epoch+1, step, D_loss.item(), G_loss.item()))
 
                 if (step+1) % 400 == 0:
-                    torchvision.utils.save_image(
-                        img_gen.detach()[:9], 'output\\{}_{}.png'.format(epoch, step), nrow=3)
+                    fpath = 'output\\{}_{}.png'.format(epoch, step)
+                    self.generateImage(fpath)
+
+
+    def generateImage(self, fpath):
+        r, c = 3, 10
+        z = torch.randn(r * c, self.latent_dim)
+        label = torch.tile(torch.arange(0, 10, dtype=torch.int32), (r, )).view(-1, 1)
+
+        if self.cuda_on:
+            z = z.cuda()
+            label = label.cuda()
+
+        img_gen = self.generator(z, label)
+        torchvision.utils.save_image(img_gen.detach(), fpath, nrow=10)
 
 if __name__ == '__main__':
-    gan = GAN()
-    gan.train(epochs=12, batch_size=64)
+    gan = CGAN()
+    gan.train(epochs=10, batch_size=64)
