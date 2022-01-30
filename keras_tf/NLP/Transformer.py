@@ -158,7 +158,7 @@ class Transformer:
 
         x = TransformerDecoderSublayer(latent_dim)(inputs, outputs_enc)
         for _ in range(num_sublayer - 1):
-            x = TransformerDecoderSublayer(latent_dim)(inputs, outputs_enc)
+            x = TransformerDecoderSublayer(latent_dim)(x, outputs_enc)
 
         return Model([inputs, outputs_enc], x)
 

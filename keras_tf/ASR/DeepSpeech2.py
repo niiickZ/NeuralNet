@@ -18,11 +18,10 @@ from keras_tf.ASR.preprocessor import LJSpeechPreprocessor
 
 class Dataloader(Sequence):
     """dataloader for CTC model"""
-    def __init__(self, wavs_list, target_sequence, mxlen, n_mels, batch_size=64):
+    def __init__(self, wavs_list, target_sequence, n_mels, batch_size=64):
         self.wavs_list = wavs_list
         self.targets = target_sequence
 
-        self.mxlen = mxlen
         self.n_mels = n_mels
         self.batch_size = batch_size
 
@@ -37,7 +36,7 @@ class Dataloader(Sequence):
 
         targets = self.targets[st:ed, :]  # shape (samples, length)
         inputs = LJSpeechPreprocessor.getSpectrograms(
-            self.wavs_list[st:ed], self.mxlen, self.n_mels
+            self.wavs_list[st:ed], self.n_mels
         )  # shape (samples, mxlen, n_mels)
 
         return inputs, targets
@@ -52,7 +51,6 @@ class DeepSpeech2:
         self.target_seq, self.vocab, self.vocab_rev = preprocessor.getTargetSequence()
         self.vocab_size = len(self.vocab.keys())
 
-        self.mxlen = 512
         self.latent_dim = 128
 
         self.model = self.buildNet()
@@ -96,8 +94,7 @@ class DeepSpeech2:
 
     def trainModel(self, epochs, batch_size=64):
         dataloader = Dataloader(
-            self.wavs_list, self.target_seq,
-            self.mxlen, self.latent_dim,
+            self.wavs_list, self.target_seq, self.latent_dim,
             batch_size=batch_size
         )
 
@@ -107,7 +104,7 @@ class DeepSpeech2:
     def test(self):
         for i in range(5):
             inputs = LJSpeechPreprocessor.getSpectrograms(
-                self.wavs_list[i:i + 1], self.mxlen, self.latent_dim
+                self.wavs_list[i:i + 1], self.latent_dim
             )
 
             res = self.recognize(inputs[0:1])
@@ -131,4 +128,4 @@ class DeepSpeech2:
 
 
 speechRecognizer = DeepSpeech2()
-speechRecognizer.trainModel(epochs=20, batch_size=64)
+speechRecognizer.trainModel(epochs=20, batch_size=8)
