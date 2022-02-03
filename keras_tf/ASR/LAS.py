@@ -4,8 +4,10 @@
 """
 
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Layer, Input, LSTM, Bidirectional, Embedding, Attention, TimeDistributed, Dense
+from tensorflow.keras.layers import Layer, Input, LSTM, Bidirectional, Embedding, \
+    Attention, TimeDistributed, Dense, Concatenate
 from tensorflow.keras.utils import Sequence
+from tensorflow.keras.optimizers import Adam
 import tensorflow.keras.backend as K
 import math
 import numpy as np
@@ -71,7 +73,7 @@ class LAS:
         self.vocab_size = len(self.vocab.keys())
 
         self.listener, self.speller, self.model = self.buildNet()
-        self.model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['acc'])
+        self.model.compile(optimizer=Adam(beta_2=0.98), loss='sparse_categorical_crossentropy', metrics=['acc'])
 
     def buildNet(self):
         listener = self.buildListener()
@@ -80,8 +82,8 @@ class LAS:
         inputs_audio = Input(shape=(None, self.input_dim))
         inputs_target = Input(shape=(None, ))
 
-        outputs_listener = listener(inputs_audio)
-        prob = speller([inputs_target, outputs_listener])
+        outputs_listener, state_h, state_c = listener(inputs_audio)
+        prob = speller([inputs_target, outputs_listener, state_h, state_c])
 
         return listener, speller, Model([inputs_audio, inputs_target], prob)
 
@@ -95,24 +97,29 @@ class LAS:
         x = Bidirectional(LSTM(256, return_sequences=True), merge_mode='ave')(x)
         x = ConsecutiveConcat()(x)
 
-        x = Bidirectional(LSTM(256, return_sequences=True), merge_mode='ave')(x)
+        x, _, _, state_h, state_c = Bidirectional(
+            LSTM(256, return_sequences=True, return_state=True), merge_mode='ave'
+        )(x)
         outputs = ConsecutiveConcat()(x)
 
-        return Model(inputs, outputs)
+        return Model(inputs, [outputs, state_h, state_c])
 
     def buildSpeller(self):
         inputs = Input(shape=(None, ))
         outputs_listener = Input(shape=(None, 512))
+        state_h = Input(shape=(256, ))
+        state_c = Input(shape=(256, ))
 
         embedded = Embedding(self.vocab_size, 128)(inputs)
-        x = LSTM(256, return_sequences=True)(embedded)
+        x = LSTM(256, return_sequences=True)(embedded, initial_state=[state_h, state_c])
         x = LSTM(512, return_sequences=True)(x)
 
-        x = Attention()([x, outputs_listener])
+        atten = Attention()([x, outputs_listener])
+        x = Concatenate()([x, atten])
 
         prob = TimeDistributed(Dense(self.vocab_size, activation='softmax'))(x)
 
-        return Model([inputs, outputs_listener], prob)
+        return Model([inputs, outputs_listener, state_h, state_c], prob)
 
     def trainModel(self, epochs, batch_size=64):
         dataloader = Dataloader(
@@ -133,8 +140,6 @@ class LAS:
             print('Ground Truth:', self.orginal_text[i])
 
     def recognize(self, spect):
-        outputs_listener = self.listener.predict(spect)
-
         # blank target sentence, which only has a <sos> symbol
         output_seq = np.zeros((1, 1))
         output_seq[0, 0] = self.vocab['\t']
@@ -142,7 +147,7 @@ class LAS:
         max_length = 80
         res = ''
         for _ in range(max_length):
-            outputs = self.speller.predict([output_seq, outputs_listener])
+            outputs = self.model.predict([spect, output_seq])
 
             output_idx = np.argmax(outputs[0, -1, :])
             output_word = self.vocab_rev[output_idx]

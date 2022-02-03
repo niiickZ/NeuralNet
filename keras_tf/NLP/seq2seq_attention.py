@@ -5,7 +5,7 @@
 
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Bidirectional, \
-    TimeDistributed, Attention, Average
+    TimeDistributed, Attention, Concatenate
 import numpy as np
 from keras_tf.NLP.preprocessor import TatoebaPreprocessor
 
@@ -25,15 +25,12 @@ class Seq2Seq:
         inputs = Input(shape=(None,))  # shape: (samples, max_length)
         embedded = Embedding(num_word, 128)(inputs)  # shape: (samples, length, vec_dim)
 
-        outputs, h1, c1, h2, c2 = Bidirectional(
+        outputs, _, _, state_h, state_c = Bidirectional(
             LSTM(latent_dim, return_sequences=True, return_state=True),
             merge_mode='ave'
         )(embedded)
 
-        state_h = Average()([h1, h2])
-        state_c = Average()([c1, c2])
-
-        # only save the last state of encoder
+        # only save the last state of (backward RNN of) encoder
         return Model(inputs, [outputs, state_h, state_c])
 
     def buildDecoder(self, num_word, latent_dim):
@@ -52,8 +49,9 @@ class Seq2Seq:
 
         outputs_enc = Input(shape=(None, latent_dim))
         outputs_atten = Attention()([outputs_dec, outputs_enc])
+        x = Concatenate()([outputs_dec, outputs_atten])
 
-        prob = TimeDistributed(Dense(num_word, activation='softmax'))(outputs_atten)
+        prob = TimeDistributed(Dense(num_word, activation='softmax'))(x)
 
         return Model(
             [inputs, input_state_h, input_state_c, outputs_enc],
