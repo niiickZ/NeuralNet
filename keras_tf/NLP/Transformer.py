@@ -4,6 +4,7 @@
 """
 
 import tensorflow as tf
+import keras
 from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.layers import Layer, Input, Dense, Embedding, Add, MultiHeadAttention, LayerNormalization
 import numpy as np
@@ -106,25 +107,66 @@ class TransformerDecoderSublayer(Layer):
 
         return tf.tile(mask, mult)
 
-class PositionEmbedding(Layer):
-    """ positional embedding layer
-        Including a token embedding and a positional embedding that output
-        same dimensions. The two output tensor is then added to one.
+class TransformerEncoder(Layer):
+    def __init__(self, latent_dim, num_sublayer=6):
+        super().__init__()
+        self.sublayers = [TransformerEncoderSublayer(latent_dim) for _ in range(num_sublayer)]
+
+    def call(self, x):
+        for sublayer in self.sublayers:
+            x = sublayer(x)
+
+        return x
+
+class TransformerDecoder(Layer):
+    def __init__(self, latent_dim, num_sublayer=6):
+        super().__init__()
+        self.sublayers = [TransformerDecoderSublayer(latent_dim) for _ in range(num_sublayer)]
+
+    def call(self, x, outputs_enc):
+        for sublayer in self.sublayers:
+            x = sublayer(x, outputs_enc)
+
+        return x
+
+class CosinePositionalEmbedding(Layer):
+    """ positional embedding using cosine functions
     """
-    def __init__(self, num_word, mxlen, latent_dim):
+    def __init__(self, mxlen, latent_dim):
+        super().__init__()
+        self.trainable = False  # set to True is also allowed
+
+        encoding_matrix = np.array([
+            [pos / np.power(10000, 2 * (j // 2) / latent_dim) for j in range(latent_dim)]
+            for pos in range(mxlen)
+        ])
+        encoding_matrix[:, 0::2] = np.sin(encoding_matrix[:, 0::2])  # dim 2i
+        encoding_matrix[:, 1::2] = np.cos(encoding_matrix[:, 1::2])  # dim 2i+1
+
+        self.embedding_pos = Embedding(
+            mxlen, latent_dim, embeddings_initializer=keras.initializers.constant(encoding_matrix))
+
+    def call(self, inputs):
+        seq_length = tf.shape(inputs)[-1]
+        positions = tf.range(start=0, limit=seq_length, delta=1)
+
+        return self.embedding_pos(positions)
+
+class LearnedPositionalEmbedding(Layer):
+    """ learned positional embedding
+    """
+    def __init__(self, mxlen, latent_dim):
         super().__init__()
 
-        self.embedding_token = Embedding(num_word, latent_dim)
         self.embedding_pos = Embedding(mxlen, latent_dim)
 
     def call(self, inputs):
         seq_length = tf.shape(inputs)[-1]
         positions = tf.range(start=0, limit=seq_length, delta=1)
 
-        embedded_token = self.embedding_token(inputs)
         embedded_pos = self.embedding_pos(positions)
 
-        return embedded_token + embedded_pos
+        return embedded_pos
 
 class Transformer:
     def __init__(self):
@@ -143,37 +185,25 @@ class Transformer:
             mxlen_en, mxlen_fra
         )
 
-    def buildEncoder(self, latent_dim, num_sublayer):
-        inputs = Input(shape=(None, latent_dim))
+    def embed(self, inputs, num_word, mxlen, latent_dim):
+        embedded_token = Embedding(num_word, latent_dim)(inputs)
+        embedded_pos = CosinePositionalEmbedding(mxlen, latent_dim)(inputs)
 
-        x = TransformerEncoderSublayer(latent_dim)(inputs)
-        for _ in range(num_sublayer - 1):
-            x = TransformerEncoderSublayer(latent_dim)(x)
+        # using a learned embedding was proved to produce nearly identical results
+        # embedded_pos = LearnedPositionalEmbedding(mxlen, latent_dim)(inputs)
 
-        return Model(inputs, x)
-
-    def buildDecoder(self, latent_dim, num_sublayer):
-        inputs = Input(shape=(None, latent_dim))
-        outputs_enc = Input(shape=(None, latent_dim))
-
-        x = TransformerDecoderSublayer(latent_dim)(inputs, outputs_enc)
-        for _ in range(num_sublayer - 1):
-            x = TransformerDecoderSublayer(latent_dim)(x, outputs_enc)
-
-        return Model([inputs, outputs_enc], x)
+        return embedded_token + embedded_pos
 
     def buildNet(self, num_word_in, num_word_out, mxlen_in, mxlen_out, latent_dim=512, num_sublayer=6):
-        self.encoder = self.buildEncoder(latent_dim, num_sublayer)
-        self.decoder = self.buildDecoder(latent_dim, num_sublayer)
-
         inputs = Input(shape=(None,))
         targets = Input(shape=(None,))
 
-        embedd_inputs = PositionEmbedding(num_word_in, mxlen_in, latent_dim)(inputs)
-        embedd_targets = PositionEmbedding(num_word_out, mxlen_out, latent_dim)(targets)
+        # input embedding
+        embedded_inputs = self.embed(inputs, num_word_in, mxlen_in, latent_dim)
+        embedded_targets = self.embed(targets, num_word_out, mxlen_out, latent_dim)
 
-        outputs_enc = self.encoder(embedd_inputs)
-        outputs_dec = self.decoder([embedd_targets, outputs_enc])
+        outputs_enc = TransformerEncoder(latent_dim, num_sublayer=num_sublayer)(embedded_inputs)
+        outputs_dec = TransformerDecoder(latent_dim, num_sublayer=num_sublayer)(embedded_targets, outputs_enc)
 
         prob = Dense(num_word_out, activation='softmax')(outputs_dec)
 
