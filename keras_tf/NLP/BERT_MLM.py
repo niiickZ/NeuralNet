@@ -30,38 +30,36 @@ class ACLIMDbPreprocessor:
 
         self.vocab_rev = dict((id, word) for word, id in self.vocab.items())
 
-    def buildVocabulary(self, max_vocab_size):
-        def tokenize(line):
-            # some regex may be useful:
-            # '(?:[A-Za-z]\.)'  # abbreviations(both upper and lower case, like "e.g.", "U.S.A.")
-            # '\w+(?:-\w+)*'        # words with optional internal hyphens
-            line = '[cls] ' + line
-            tokens = regexp_tokenize(line, pattern=r'\[[a-zA-Z]+\]|\w+')
-            return tokens
-
-        texts = [tokenize(line) for line in self.texts]
-
-        tokenizer = Tokenizer(num_words=max_vocab_size, oov_token='[unk]')
-        tokenizer.fit_on_texts(texts)
-
-        # --------------------
-        # add [mask] tokens to the vocabulary
-        vocab = tokenizer.word_index
+    def addSpecialTokens(self, vocab, tokens, max_vocab_size):
         vocab[''] = 0
-
         vocab = sorted(vocab.items(), key=lambda kv: kv[1])
 
-        if max_vocab_size < len(vocab):  # only preserve the max_vocab_size words with highest frequency
-            vocab = vocab[:max_vocab_size]
+        # only preserve the max_vocab_size words with highest frequency
+        vocab = vocab[:min(max_vocab_size, len(vocab))]
 
-        vocab_size = len(vocab)  # replace the last word-id pair with [mask]-id pair
-        vocab[vocab_size - 1] = ('[mask]', vocab_size - 1)
+        vocab_size = len(vocab)  # replace the last word-id pair with "special token"-id pair
+        for i, token in enumerate(tokens):
+            vocab[vocab_size - i - 1] = (tokens[i], vocab_size - i - 1)
 
-        tokenizer.word_index = dict(vocab)
-        # --------------------
+        return dict(vocab)
 
-        word_seq = tokenizer.texts_to_sequences(texts)
+    def buildVocabulary(self, max_vocab_size):
+        tokenizer = Tokenizer(num_words=max_vocab_size, oov_token='[unk]')
+        tokenizer.fit_on_texts(self.texts)
+
+        # add special tokens to the vocabulary
+        tokenizer.word_index = self.addSpecialTokens(
+            vocab=tokenizer.word_index, tokens=['[mask]', '[cls]'], max_vocab_size=max_vocab_size)
+
+        # convert word token list into id sequence
+        word_seq = tokenizer.texts_to_sequences(self.texts)
         word_seq = pad_sequences(word_seq, padding='post', truncating='post')
+
+        # add [cls] token at the beginning of every sequence
+        if '[cls]' in tokenizer.word_index:
+            cls_id = tokenizer.word_index['[cls]']
+            cls = np.ones((word_seq.shape[0], 1)) * cls_id
+            word_seq = np.hstack((cls, word_seq))
 
         return word_seq, tokenizer.word_index
 
@@ -213,11 +211,12 @@ class PretrainBERT:
         return model
 
     def preTrain(self, epochs, batch_size):
-        self.pretrainModel.fit(self.inputs, self.outputs, sample_weight=self.sample_weights,
-                       epochs=epochs, batch_size=batch_size)
+        self.pretrainModel.fit(
+            self.inputs, self.outputs, sample_weight=self.sample_weights,
+            epochs=epochs, batch_size=batch_size
+        )
 
         self.baseModel.save('./BaseBERT')
-
         self.pretrainValidate()
 
     def pretrainValidate(self):
@@ -244,5 +243,5 @@ class PretrainBERT:
             print('decoded sentence:', decoded_sentence)
 
 
-pretrain_bert = PretrainBERT()
-pretrain_bert.preTrain(epochs=20, batch_size=32)
+bert = PretrainBERT()
+bert.preTrain(epochs=20, batch_size=32)
