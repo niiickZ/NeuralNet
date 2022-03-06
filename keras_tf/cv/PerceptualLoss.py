@@ -12,7 +12,6 @@ import tensorflow.keras.backend as K
 import numpy as np
 import cv2
 import glob
-import os
 import random
 
 
@@ -85,11 +84,7 @@ def content_loss(content, combination, reduction='mean'):
         return K.sum(square)
 
 def tv_loss(img, reduction='mean'):
-    _, height, width, channels = K.shape(img)
-    a = tf.square(img[:, :height-1, :width-1, :] - img[:, 1:, :width-1, :])
-    b = tf.square(img[:, :height-1, :width-1, :] - img[:, :height-1, 1:, :])
-
-    t = K.sum(K.pow(a + b, 1.25), axis=[1, 2, 3])
+    t = tf.image.total_variation(img)
     if reduction == 'mean':
         return K.mean(t)
     else:
@@ -99,7 +94,7 @@ def tv_loss(img, reduction='mean'):
 def perceptualLoss(img_content, img_style, img_combination, loss_net):
     content_weight = 2e-6
     style_weight = 3e-2
-    tv_weight = 5e-5
+    tv_weight = 1e-5
 
     content_layer_name = 'block4_conv3'
     style_layer_names = [
